@@ -1,4 +1,7 @@
+from flask import Flask, request, render_template_string, jsonify
 import random
+
+app = Flask(__name__)
 
 # Reprezentacja ruchów w 4 strony (dół, góra, prawo, lewo)
 directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
@@ -85,13 +88,103 @@ class MazeSolver:
                 (x, y) not in self.visited
         )
 
-# Test - maze generator
-width = 15
-height = 15
-maze_test = generate_solvable_maze(width, height)
+solver = None
 
-for x in range(0, height):
-    print(maze_test[x])
+@app.route('/')
+def index():
+    return '''
+    <!doctype html>
+    <title>Maze Solver</title>
+    <h1>Maze Solver</h1>
+    <form method="post" action="/generate">
+        <label for="width">Width:</label>
+        <input type="range" id="width" name="width" min="10" max="50" value="20" oninput="this.nextElementSibling.value = this.value">
+        <output>20</output><br>
+        <label for="height">Height:</label>
+        <input type="range" id="height" name="height" min="10" max="30" value="10" oninput="this.nextElementSibling.value = this.value">
+        <output>10</output><br>
+        <button type="submit">Generate Maze</button>
+    </form>
+    '''
+
+
+@app.route('/generate', methods=['POST'])
+def generate():
+    global solver
+    width = int(request.form.get("width", 21))
+    height = int(request.form.get("height", 21))
+    if width % 2 == 0:
+        width += 1
+    if height % 2 == 0:
+        height += 1
+
+    maze = generate_solvable_maze(width, height)
+    solver = MazeSolver(maze)
+    maze_html = render_maze(maze)
+    return render_template_string('''
+    <!doctype html>
+    <title>Maze Solver</title>
+    <h1>Generated Maze</h1>
+    <div id="maze">{{ maze_html|safe }}</div>
+    <div id="message"></div>
+    <button onclick="generateNew()">Generate New Maze</button>
+    <script>
+        async function solveMaze() {
+            while (true) {
+                const response = await fetch('/solve-step');
+                const data = await response.json();
+                if (data.status === "solved") {
+                    document.getElementById("message").innerText = "Maze solved!";
+                    break;
+                }
+                if (data.status === "no solution") {
+                    document.getElementById("message").innerText = "No solution found!";
+                    break;
+                }
+                document.getElementById("maze").innerHTML = data.html;
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+        }
+        function generateNew() {
+            window.location = "/";
+        }
+        solveMaze(); // Automatically start solving
+    </script>
+    ''', maze_html=maze_html)
+
+
+@app.route('/solve-step')
+def solve_step():
+    global solver
+    if solver is None:
+        return jsonify({"status": "no maze"})
+
+    result = solver.solve_step()
+    if result == "solved":
+        maze_html = render_maze(solver.maze, solver.path)
+        return jsonify({"status": "solved", "html": maze_html})
+    elif result is None:
+        return jsonify({"status": "no solution"})
+    else:
+        maze_html = render_maze(solver.maze, solver.path)
+        return jsonify({"status": "in progress", "html": maze_html})
+
+
+def render_maze(maze, path=None):
+    maze_copy = [row.copy() for row in maze]
+    if path:
+        for x, y in path:
+            if maze_copy[y][x] not in ("S", "W"):
+                maze_copy[y][x] = "*"
+
+    return "<pre>" + "\n".join(
+        ''.join(f'<span style="color:red;">*</span>' if cell == "*" else cell for cell in row)
+        for row in maze_copy
+    ) + "</pre>"
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
 
 
 
